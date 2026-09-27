@@ -1,10 +1,12 @@
 import http from 'node:http';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { verifyApiKey } from './auth.mjs';
 import { isRefundEvent, validateEnvelope, verifyRobloxWebhook } from './webhook.mjs';
 
 const port = Number(process.env.PORT ?? 8787);
-const secret = process.env.ROBLOX_WEBHOOK_SECRET ?? '';
+const webhookSecret = process.env.ROBLOX_WEBHOOK_SECRET ?? '';
+const refundApiKey = process.env.REFUND_API_KEY ?? '';
 const logPath = path.resolve(process.env.REFUND_LOG_PATH ?? './data/refunds.jsonl');
 
 async function readEvents() {
@@ -50,6 +52,23 @@ async function readRawJsonBody(req) {
   return { rawBody, body };
 }
 
+function authorizeRefundRead(req, res) {
+  const verification = verifyApiKey({
+    provided: req.headers['x-refund-api-key'],
+    expected: refundApiKey,
+  });
+
+  if (verification.ok) return true;
+
+  if (verification.reason === 'api_key_not_configured') {
+    sendJson(res, 503, { ok: false, error: verification.reason });
+    return false;
+  }
+
+  sendJson(res, 401, { ok: false, error: verification.reason });
+  return false;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -58,7 +77,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'refund-management',
-        version: '0.1.1',
+        version: '0.2.0',
         endpoints: {
           health: '/health',
           webhook: '/webhooks/roblox',
@@ -71,11 +90,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'refund-management',
-        webhookSecretConfigured: Boolean(secret),
+        webhookSecretConfigured: Boolean(webhookSecret),
+        apiKeyConfigured: Boolean(refundApiKey),
       });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/refunds') {
+      if (!authorizeRefundRead(req, res)) return;
+
       const requested = Number(url.searchParams.get('limit') ?? 20);
       const limit = Math.max(1, Math.min(Number.isFinite(requested) ? requested : 20, 100));
       const events = (await readEvents()).filter(isRefundEvent).slice(-limit).reverse();
@@ -91,7 +113,7 @@ const server = http.createServer(async (req, res) => {
       const verification = verifyRobloxWebhook({
         header: req.headers['roblox-signature'],
         rawBody,
-        secret,
+        secret: webhookSecret,
       });
 
       if (!verification.ok) {
