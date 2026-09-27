@@ -35,24 +35,44 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
-async function readJsonBody(req) {
+async function readRawJsonBody(req) {
   const chunks = [];
   let size = 0;
+
   for await (const chunk of req) {
     size += chunk.length;
     if (size > 1_000_000) throw new Error('body_too_large');
     chunks.push(chunk);
   }
-  const raw = Buffer.concat(chunks).toString('utf8');
-  return JSON.parse(raw || '{}');
+
+  const rawBody = Buffer.concat(chunks).toString('utf8');
+  const body = JSON.parse(rawBody || '{}');
+  return { rawBody, body };
 }
 
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
+    if (req.method === 'GET' && url.pathname === '/') {
+      return sendJson(res, 200, {
+        ok: true,
+        service: 'refund-management',
+        version: '0.1.1',
+        endpoints: {
+          health: '/health',
+          webhook: '/webhooks/roblox',
+          refunds: '/api/refunds?limit=20',
+        },
+      });
+    }
+
     if (req.method === 'GET' && url.pathname === '/health') {
-      return sendJson(res, 200, { ok: true, service: 'refund-management' });
+      return sendJson(res, 200, {
+        ok: true,
+        service: 'refund-management',
+        webhookSecretConfigured: Boolean(secret),
+      });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/refunds') {
@@ -62,20 +82,25 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { count: events.length, events });
     }
 
-    if (req.method === 'POST' && url.pathname === '/webhooks/roblox') {
-      const body = await readJsonBody(req);
-      if (!validateEnvelope(body)) {
-        return sendJson(res, 400, { ok: false, error: 'invalid_webhook_envelope' });
-      }
+    if (
+      req.method === 'POST'
+      && (url.pathname === '/webhooks/roblox' || url.pathname === '/webhooks/roblox/refund')
+    ) {
+      const { rawBody, body } = await readRawJsonBody(req);
 
       const verification = verifyRobloxWebhook({
         header: req.headers['roblox-signature'],
-        body,
+        rawBody,
         secret,
       });
+
       if (!verification.ok) {
         const status = verification.reason === 'expired_request' ? 403 : 401;
         return sendJson(res, status, { ok: false, error: verification.reason });
+      }
+
+      if (!validateEnvelope(body)) {
+        return sendJson(res, 400, { ok: false, error: 'invalid_webhook_envelope' });
       }
 
       // Creator Hub's Test Response sends SampleNotification. Accept it without storing it.
@@ -98,13 +123,18 @@ const server = http.createServer(async (req, res) => {
 
     return sendJson(res, 404, { ok: false, error: 'not_found' });
   } catch (error) {
-    if (error instanceof SyntaxError) return sendJson(res, 400, { ok: false, error: 'invalid_json' });
-    if (error?.message === 'body_too_large') return sendJson(res, 413, { ok: false, error: 'body_too_large' });
+    if (error instanceof SyntaxError) {
+      return sendJson(res, 400, { ok: false, error: 'invalid_json' });
+    }
+    if (error?.message === 'body_too_large') {
+      return sendJson(res, 413, { ok: false, error: 'body_too_large' });
+    }
+
     console.error(error);
     return sendJson(res, 500, { ok: false, error: 'internal_error' });
   }
 });
 
-server.listen(port, () => {
-  console.log(`Refund Management listening on http://localhost:${port}`);
+server.listen(port, '0.0.0.0', () => {
+  console.log(`Refund Management listening on 0.0.0.0:${port}`);
 });
