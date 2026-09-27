@@ -1,7 +1,7 @@
 local HttpService = game:GetService("HttpService")
 
 local SETTING_KEY = "RefundLoggerApiBaseUrl"
-local DEFAULT_API = "http://localhost:8787"
+local DEFAULT_API = "https://refundmanagement-production.up.railway.app"
 
 local toolbar = plugin:CreateToolbar("Refund Management")
 local openButton = toolbar:CreateButton(
