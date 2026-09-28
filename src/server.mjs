@@ -1,13 +1,14 @@
 import http from 'node:http';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
 import { verifyApiKey } from './auth.mjs';
+import { resolveRefundLogPath } from './storage.mjs';
 import { isRefundEvent, validateEnvelope, verifyRobloxWebhook } from './webhook.mjs';
 
 const port = Number(process.env.PORT ?? 8787);
 const webhookSecret = process.env.ROBLOX_WEBHOOK_SECRET ?? '';
 const refundApiKey = process.env.REFUND_API_KEY ?? '';
-const logPath = path.resolve(process.env.REFUND_LOG_PATH ?? './data/refunds.jsonl');
+const storage = resolveRefundLogPath();
+const logPath = storage.logPath;
 
 async function readEvents() {
   try {
@@ -92,6 +93,8 @@ const server = http.createServer(async (req, res) => {
         service: 'refund-management',
         webhookSecretConfigured: Boolean(webhookSecret),
         apiKeyConfigured: Boolean(refundApiKey),
+        storagePersistent: storage.persistent,
+        storageMode: storage.mode,
       });
     }
 
@@ -159,4 +162,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`Refund Management listening on 0.0.0.0:${port}`);
+  console.log(`Refund storage mode: ${storage.mode} (persistent=${storage.persistent})`);
 });
