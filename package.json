@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test",
-    "check": "node --check src/server.mjs && node --check src/webhook.mjs && node --check src/auth.mjs"
+    "check": "node --check src/server.mjs && node --check src/webhook.mjs && node --check src/auth.mjs && node --check src/storage.mjs"
   },
   "engines": {
     "node": ">=22"
