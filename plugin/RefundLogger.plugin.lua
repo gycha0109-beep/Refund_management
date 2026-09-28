@@ -38,11 +38,15 @@ local widgetInfo = DockWidgetPluginGuiInfo.new(
 local widget = plugin:CreateDockWidgetPluginGuiAsync("RefundManagementLoggerV2", widgetInfo)
 widget.Title = "Refund Logger"
 
-local root = Instance.new("Frame")
+local root = Instance.new("ScrollingFrame")
 root.Name = "Root"
 root.Size = UDim2.fromScale(1, 1)
 root.BackgroundColor3 = COLORS.background
 root.BorderSizePixel = 0
+root.ScrollBarThickness = 6
+root.ScrollingDirection = Enum.ScrollingDirection.Y
+root.AutomaticCanvasSize = Enum.AutomaticSize.Y
+root.CanvasSize = UDim2.new()
 root.Parent = widget
 
 local padding = Instance.new("UIPadding")
@@ -158,9 +162,11 @@ statusLabel.TextColor3 = COLORS.muted
 statusLabel.TextSize = 14
 statusLabel.Parent = root
 
+local recentLabel = makeLabel(7, "Recent refunds")
+
 local list = Instance.new("ScrollingFrame")
-list.LayoutOrder = 7
-list.Size = UDim2.new(1, 0, 1, -225)
+list.LayoutOrder = 8
+list.Size = UDim2.new(1, 0, 0, 320)
 list.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
 list.BorderSizePixel = 0
 list.ScrollBarThickness = 6
@@ -282,8 +288,7 @@ local function addRow(event, index)
     local row = Instance.new("Frame")
     row.Name = "RefundRow"
     row.LayoutOrder = index
-    row.Size = UDim2.new(1, -4, 0, 0)
-    row.AutomaticSize = Enum.AutomaticSize.Y
+    row.Size = UDim2.new(1, -4, 0, 132)
     row.BackgroundColor3 = COLORS.panel
     row.BorderSizePixel = 0
     row.Parent = list
@@ -296,8 +301,7 @@ local function addRow(event, index)
     rowPadding.Parent = row
 
     local text = Instance.new("TextLabel")
-    text.Size = UDim2.new(1, 0, 0, 0)
-    text.AutomaticSize = Enum.AutomaticSize.Y
+    text.Size = UDim2.new(1, 0, 1, 0)
     text.BackgroundTransparency = 1
     text.TextColor3 = COLORS.text
     text.TextXAlignment = Enum.TextXAlignment.Left
@@ -412,7 +416,7 @@ local function refresh()
         addRow(event, index)
     end
 
-    setStatus(string.format("Connected — %d refund event(s).", #events), "success")
+    setStatus(string.format("Connected — %d refund event(s) loaded below.", #events), "success")
 end
 
 saveButton.MouseButton1Click:Connect(function()
