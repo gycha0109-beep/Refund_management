@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { verifyApiKey } from './auth.mjs';
 import { resolveRefundLogPath } from './storage.mjs';
 import { isRefundEvent, validateEnvelope, verifyRobloxWebhook } from './webhook.mjs';
