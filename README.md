@@ -38,6 +38,8 @@ REFUND_API_KEY=...
 REFUND_LOG_PATH=./data/refunds.jsonl
 ```
 
+`REFUND_LOG_PATH` is optional on Railway. If a Railway Volume is attached, the app automatically uses `RAILWAY_VOLUME_MOUNT_PATH/refunds.jsonl`.
+
 `ROBLOX_WEBHOOK_SECRET` authenticates Roblox webhook deliveries.
 
 `REFUND_API_KEY` is a separate secret used only by the Studio plugin when reading refund events. Do not reuse the webhook secret.
@@ -90,7 +92,18 @@ ROBLOX_WEBHOOK_SECRET=...
 REFUND_API_KEY=...
 ```
 
-The default `./data/refunds.jsonl` file is suitable for MVP testing, but Railway service storage is ephemeral across redeploys/restarts unless persistent storage is attached. Before real use, attach a Railway Volume and point `REFUND_LOG_PATH` at the mounted path, or move the ledger to a database.
+For persistent MVP storage, attach a Railway Volume to this service. A mount path such as `/data` is sufficient.
+
+Railway automatically exposes `RAILWAY_VOLUME_MOUNT_PATH`. When present, the app writes to `<mount>/refunds.jsonl` automatically, so no extra `REFUND_LOG_PATH` variable is required.
+
+`GET /health` reports:
+
+- `storagePersistent: true`
+- `storageMode: "railway-volume"`
+
+when the app is actually using the mounted Railway Volume.
+
+Without a volume, the fallback `./data/refunds.jsonl` is ephemeral and can be lost on redeploy/restart.
 
 ## Studio plugin
 
