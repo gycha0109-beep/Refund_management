@@ -1,6 +1,6 @@
 # Refund Management
 
-Roblox Transaction Refunded webhook logger MVP.
+Roblox Transaction Refunded webhook logger and Studio viewer.
 
 ## Scope
 
@@ -15,7 +15,7 @@ Roblox Transaction Refunded webhook logger MVP.
 
 Automatic entitlement revocation, billing, SaaS accounts, multi-tenancy, and team features are intentionally out of scope for this MVP.
 
-## Production URL
+## Maintainer test deployment
 
 ```text
 https://refundmanagement-production.up.railway.app
@@ -109,11 +109,11 @@ Without a volume, the fallback `./data/refunds.jsonl` is ephemeral and can be lo
 
 `plugin/RefundLogger.plugin.lua` creates a dockable Studio panel.
 
-The plugin defaults to the production Railway URL. Enter the same `REFUND_API_KEY` configured in Railway, click **Save**, then **Test** or **Refresh**.
+The public beta intentionally ships with **no backend URL and no credential embedded**. Enter the URL of the backend you control and the same `REFUND_API_KEY` configured on that backend, click **Save**, then **Test** or **Refresh**.
 
 The plugin uses `HttpService:RequestAsync()` and sends the API key in the `x-refund-api-key` header. Studio may prompt the user to approve HTTP access to the Railway domain the first time it connects.
 
-For this single-user MVP, the API key is stored with `Plugin:SetSetting()` on the local Studio installation. That is convenient, not a production-grade multi-tenant authentication model. A public Creator Store release should move to per-install, revocable credentials.
+For this BYO-backend beta, the API key is stored with `Plugin:SetSetting()` on the local Studio installation. This is intentionally a single-tenant developer-tool model, not hosted multi-tenant SaaS authentication. See `docs/SECURITY.md` and `docs/CREATOR_STORE_BETA.md`.
 
 ## Tests
 
