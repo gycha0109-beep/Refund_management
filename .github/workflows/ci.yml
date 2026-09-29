@@ -27,3 +27,15 @@ jobs:
 
       - name: Tests
         run: npm test
+
+      - name: Public plugin secret guard
+        shell: bash
+        run: |
+          if grep -Eq 'refundmanagement-production\.up\.railway\.app|ROBLOX_WEBHOOK_SECRET[[:space:]]*=' plugin/RefundLogger.plugin.lua; then
+            echo "Public plugin contains a maintainer endpoint or webhook secret marker."
+            exit 1
+          fi
+          if grep -Eq 'local DEFAULT_API = "[^"]+"' plugin/RefundLogger.plugin.lua; then
+            echo "Public plugin must not ship with a default backend URL."
+            exit 1
+          fi
