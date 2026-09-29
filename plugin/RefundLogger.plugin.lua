@@ -2,7 +2,7 @@ local HttpService = game:GetService("HttpService")
 
 local API_URL_SETTING = "RefundLoggerApiBaseUrl"
 local API_KEY_SETTING = "RefundLoggerApiKey"
-local DEFAULT_API = "https://refundmanagement-production.up.railway.app"
+local DEFAULT_API = ""
 
 local COLORS = {
     background = Color3.fromRGB(30, 30, 34),
@@ -108,7 +108,7 @@ local endpointBox = makeTextBox(
 makeLabel(3, "API key")
 local apiKeyBox = makeTextBox(
     4,
-    "Paste REFUND_API_KEY",
+    "Paste your refund-read API key",
     plugin:GetSetting(API_KEY_SETTING) or ""
 )
 
@@ -154,7 +154,7 @@ local statusLabel = Instance.new("TextLabel")
 statusLabel.LayoutOrder = 6
 statusLabel.Size = UDim2.new(1, 0, 0, 42)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Not connected"
+statusLabel.Text = "First run — enter your backend URL and refund-read API key."
 statusLabel.TextWrapped = true
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.TextYAlignment = Enum.TextYAlignment.Top
@@ -364,9 +364,9 @@ end
 
 local function showRequestError(reason, detail)
     if reason == "missing_url" then
-        setStatus("Set an API URL first.", "warning")
+        setStatus("Enter your Refund Logger backend URL first.", "warning")
     elseif reason == "missing_api_key" then
-        setStatus("Paste REFUND_API_KEY first.", "warning")
+        setStatus("Enter your refund-read API key first.", "warning")
     elseif reason == "unauthorized" then
         setStatus("Server reachable — API key rejected.", "error")
     elseif reason == "server_unconfigured" then
@@ -423,7 +423,7 @@ saveButton.MouseButton1Click:Connect(function()
     local baseUrl, apiKey = currentConfig()
     plugin:SetSetting(API_URL_SETTING, baseUrl)
     plugin:SetSetting(API_KEY_SETTING, apiKey)
-    setStatus("Configuration saved locally in Studio.", "success")
+    setStatus("Configuration saved locally in Studio. Click Test to verify it.", "success")
 end)
 
 testButton.MouseButton1Click:Connect(testConnection)
