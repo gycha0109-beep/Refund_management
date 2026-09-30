@@ -78,6 +78,10 @@ class FileStore {
     };
   }
 
+  async ping() {
+    return true;
+  }
+
   withActionLock(fn) {
     const run = this.actionMutation.then(fn, fn);
     this.actionMutation = run.catch(() => {});
@@ -189,6 +193,11 @@ class SupabaseStore {
       refundPersistent: true,
       actionPersistent: true,
     };
+  }
+
+  async ping() {
+    await this.request('GET', 'refunds?select=notification_id&limit=1');
+    return true;
   }
 
   async request(method, resource, { body = null, headers = {} } = {}) {
