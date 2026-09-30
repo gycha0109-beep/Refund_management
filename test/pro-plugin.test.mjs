@@ -26,3 +26,20 @@ test('Pro plugin installs only server-side runtime containers', () => {
   assert.equal(source.includes('ReplicatedStorage'), false);
   assert.equal(source.includes('LocalScript'), false);
 });
+
+
+test('Studio operations use the refund read key and never expose the runtime action secret', () => {
+  assert.match(source, /x-refund-api-key/);
+  assert.match(source, /RobuxBacktrackProStudioApiKey/);
+  assert.match(source, /\/api\/actions\//);
+  assert.match(source, /"ignore"/);
+  assert.match(source, /"retry"/);
+  assert.match(source, /Confirm ignore/);
+  assert.equal(source.includes('x-action-api-key"] = studioApiKey'), false);
+});
+
+test('operations UI exposes the full action lifecycle', () => {
+  for (const status of ['PENDING', 'FAILED', 'PROCESSING', 'APPLIED', 'IGNORED']) {
+    assert.match(source, new RegExp(`"${status}"`));
+  }
+});
