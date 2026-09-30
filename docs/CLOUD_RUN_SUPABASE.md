@@ -116,3 +116,32 @@ Recommended cutover:
 6. Observe
 7. Only then plan production cutover
 ```
+
+
+## Free-plan anti-pause keepalive
+
+Supabase Free projects can be paused after a low-activity period. For a refund webhook product, real refund traffic can be too sparse to keep the database active.
+
+The backend therefore exposes:
+
+```text
+GET /internal/keepalive
+x-refund-api-key: REFUND_API_KEY
+```
+
+The endpoint performs one lightweight Supabase query. It is protected by the Studio/read API key and is not public data.
+
+Create one Cloud Scheduler job that calls it several times per day. Example:
+
+```bash
+gcloud scheduler jobs create http robux-backtrack-supabase-keepalive \
+  --location asia-northeast3 \
+  --schedule "0 */6 * * *" \
+  --uri "https://YOUR-CLOUD-RUN-URL/internal/keepalive" \
+  --http-method GET \
+  --headers "x-refund-api-key=YOUR_REFUND_API_KEY"
+```
+
+One scheduler definition can execute multiple times per day; billing is per job, not per execution.
+
+Do not treat this as a substitute for backups. It only prevents the app from becoming idle enough to be a likely free-project pause candidate.
