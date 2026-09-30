@@ -137,6 +137,15 @@ test('HTTP server accepts a signed refund and exposes a leased action queue', as
   assert.equal(pendingPayload.actions[0].ActionId, body.NotificationId);
   assert.equal(pendingPayload.actions[0].Status, 'PENDING');
 
+  const actionById = await fetch(
+    `http://127.0.0.1:${port}/api/actions/${body.NotificationId}`,
+    { headers: { 'x-action-api-key': actionApiKey } },
+  );
+  assert.equal(actionById.status, 200);
+  const actionByIdPayload = await actionById.json();
+  assert.equal(actionByIdPayload.action.ActionId, body.NotificationId);
+  assert.equal(actionByIdPayload.action.Status, 'PENDING');
+
   const claimableBefore = await fetch(
     `http://127.0.0.1:${port}/api/actions?claimable=true`,
     { headers: { 'x-action-api-key': actionApiKey } },
