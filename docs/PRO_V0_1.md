@@ -151,17 +151,16 @@ The experience owner must still:
 3. Implement each ProductId handler against the game's own persistent data model.
 4. Test with a controlled fake refund before enabling real operational use.
 
-## Next phase
+## P4 E2E harness
 
-P4 is an end-to-end fixture/demo:
+P4 implementation is now present in:
 
-```text
-fake refund
- -> backend PENDING
- -> Roblox server claim
- -> sample persistent balance mutation
- -> local idempotency marker
- -> backend APPLIED
-```
+- `scripts/e2e-refund.mjs`: signed synthetic refund sender plus terminal-state waiter.
+- `roblox/e2e/`: Studio-only 1000 -> 500 Gems fixture, forced failure path, inspection scripts, and an ACK-loss bootstrap.
+- `docs/PRO_E2E_TEST.md`: staging isolation and the five-case validation matrix.
+
+The runtime now supports one Studio-only fault mode, `AFTER_HANDLER_BEFORE_COMPLETE`, to reproduce the dangerous case where the game mutation succeeded but the backend acknowledgement was lost.
+
+Repository CI verifies the harness and backend contracts. P4 is not considered CLOSED until the Roblox Studio fixture is actually run against a dedicated staging deployment and all five cases are observed.
 
 P5 then adds the operational Pro UI for PENDING/APPLIED/FAILED/IGNORED review.
