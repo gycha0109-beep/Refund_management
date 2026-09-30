@@ -1,77 +1,15 @@
-import crypto from 'node:crypto';
 import http from 'node:http';
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
-import {
-  ACTION_STATUSES,
-  actionFromRefund,
-  claimAction,
-  completeAction,
-  failAction,
-  findCurrentAction,
-  ignoreAction,
-  isActionClaimable,
-  reduceActionJournal,
-  retryAction,
-} from './actions.mjs';
+import { ACTION_STATUSES } from './actions.mjs';
 import { verifyApiKey } from './auth.mjs';
-import { resolveActionLogPath, resolveRefundLogPath } from './storage.mjs';
+import { createStore } from './store.mjs';
 import { isRefundEvent, validateEnvelope, verifyRobloxWebhook } from './webhook.mjs';
 
 const port = Number(process.env.PORT ?? 8787);
 const webhookSecret = process.env.ROBLOX_WEBHOOK_SECRET ?? '';
 const refundApiKey = process.env.REFUND_API_KEY ?? '';
 const actionApiKey = process.env.ACTION_API_KEY ?? '';
-const refundStorage = resolveRefundLogPath();
-const actionStorage = resolveActionLogPath();
-const refundLogPath = refundStorage.logPath;
-const actionLogPath = actionStorage.logPath;
-
-let actionMutation = Promise.resolve();
-
-function withActionLock(fn) {
-  const run = actionMutation.then(fn, fn);
-  actionMutation = run.catch(() => {});
-  return run;
-}
-
-async function readJsonl(filePath) {
-  try {
-    const text = await readFile(filePath, 'utf8');
-    return text
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
-  } catch (error) {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  }
-}
-
-async function appendJsonl(filePath, value) {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await appendFile(filePath, `${JSON.stringify(value)}\n`, 'utf8');
-}
-
-async function readEvents() {
-  return readJsonl(refundLogPath);
-}
-
-async function readActionJournal() {
-  return readJsonl(actionLogPath);
-}
-
-async function ensureActionForRefund(refund) {
-  return withActionLock(async () => {
-    const journal = await readActionJournal();
-    const existing = findCurrentAction(journal, refund.NotificationId);
-    if (existing) return { created: false, action: existing };
-
-    const action = actionFromRefund(refund);
-    await appendJsonl(actionLogPath, action);
-    return { created: true, action };
-  });
-}
+const store = createStore();
+const storage = store.describe();
 
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -154,6 +92,14 @@ function actionErrorStatus(reason) {
   return 400;
 }
 
+function normalizeLimit(raw, fallback = 20) {
+  const requested = Number(raw ?? fallback);
+  return Math.max(
+    1,
+    Math.min(Number.isFinite(requested) ? Math.trunc(requested) : fallback, 100),
+  );
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -162,7 +108,8 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'refund-management',
-        version: '0.4.0-alpha.4',
+        version: '0.4.0-alpha.5',
+        storage: storage.mode,
         endpoints: {
           health: '/health',
           webhook: '/webhooks/roblox',
@@ -179,27 +126,27 @@ const server = http.createServer(async (req, res) => {
         webhookSecretConfigured: Boolean(webhookSecret),
         apiKeyConfigured: Boolean(refundApiKey),
         actionApiKeyConfigured: Boolean(actionApiKey),
-        storagePersistent: refundStorage.persistent,
-        storageMode: refundStorage.mode,
-        actionStoragePersistent: actionStorage.persistent,
-        actionStorageMode: actionStorage.mode,
+        storagePersistent: storage.refundPersistent,
+        storageMode: storage.refundMode,
+        actionStoragePersistent: storage.actionPersistent,
+        actionStorageMode: storage.actionMode,
+        dataStore: storage.mode,
+        supabaseConfigured: storage.mode === 'supabase',
       });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/refunds') {
       if (!authorizeRefundRead(req, res)) return;
 
-      const requested = Number(url.searchParams.get('limit') ?? 20);
-      const limit = Math.max(1, Math.min(Number.isFinite(requested) ? requested : 20, 100));
-      const events = (await readEvents()).filter(isRefundEvent).slice(-limit).reverse();
+      const limit = normalizeLimit(url.searchParams.get('limit'));
+      const events = await store.listRefunds({ limit });
       return sendJson(res, 200, { count: events.length, events });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/actions') {
       if (!authorizeActionRead(req, res)) return;
 
-      const requested = Number(url.searchParams.get('limit') ?? 20);
-      const limit = Math.max(1, Math.min(Number.isFinite(requested) ? requested : 20, 100));
+      const limit = normalizeLimit(url.searchParams.get('limit'));
       const requestedStatus = url.searchParams.get('status');
       const status = requestedStatus?.toUpperCase() ?? null;
       const requestedClaimable = url.searchParams.get('claimable');
@@ -219,16 +166,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: 'conflicting_action_filters' });
       }
 
-      let actions = reduceActionJournal(await readActionJournal());
-      if (status) {
-        actions = actions.filter((action) => action.Status === status);
-      } else if (claimable) {
-        actions = actions.filter((action) => isActionClaimable(action));
-      }
-
-      actions.sort((a, b) => String(b.UpdatedAt).localeCompare(String(a.UpdatedAt)));
-      actions = actions.slice(0, limit);
-
+      const actions = await store.listActions({ status, claimable, limit });
       return sendJson(res, 200, { count: actions.length, actions });
     }
 
@@ -237,7 +175,7 @@ const server = http.createServer(async (req, res) => {
       if (!authorizeActionRead(req, res)) return;
 
       const actionId = decodeURIComponent(actionItemRoute[1]);
-      const current = findCurrentAction(await readActionJournal(), actionId);
+      const current = await store.getAction(actionId);
       if (!current) {
         return sendJson(res, 404, { ok: false, error: 'action_not_found' });
       }
@@ -245,7 +183,9 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, action: current });
     }
 
-    const operatorActionRoute = url.pathname.match(/^\/api\/actions\/([^/]+)\/(ignore|retry)$/);
+    const operatorActionRoute = url.pathname.match(
+      /^\/api\/actions\/([^/]+)\/(ignore|retry)$/,
+    );
     if (req.method === 'POST' && operatorActionRoute) {
       if (!authorizeRefundRead(req, res)) return;
 
@@ -253,37 +193,27 @@ const server = http.createServer(async (req, res) => {
       const operation = operatorActionRoute[2];
       const { body } = await readRawJsonBody(req);
 
-      return withActionLock(async () => {
-        const journal = await readActionJournal();
-        const current = findCurrentAction(journal, actionId);
-        if (!current) {
-          return sendJson(res, 404, { ok: false, error: 'action_not_found' });
-        }
+      const transition = operation === 'ignore'
+        ? await store.ignoreAction(actionId, { reason: body.reason })
+        : await store.retryAction(actionId);
 
-        const transition = operation === 'ignore'
-          ? ignoreAction(current, { reason: body.reason })
-          : retryAction(current);
-
-        if (!transition.ok) {
-          return sendJson(res, actionErrorStatus(transition.reason), {
-            ok: false,
-            error: transition.reason,
-          });
-        }
-
-        if (!transition.idempotent) {
-          await appendJsonl(actionLogPath, transition.action);
-        }
-
-        return sendJson(res, 200, {
-          ok: true,
-          idempotent: Boolean(transition.idempotent),
-          action: transition.action,
+      if (!transition.ok) {
+        return sendJson(res, actionErrorStatus(transition.reason), {
+          ok: false,
+          error: transition.reason,
         });
+      }
+
+      return sendJson(res, 200, {
+        ok: true,
+        idempotent: Boolean(transition.idempotent),
+        action: transition.action,
       });
     }
 
-    const actionRoute = url.pathname.match(/^\/api\/actions\/([^/]+)\/(claim|complete|fail)$/);
+    const actionRoute = url.pathname.match(
+      /^\/api\/actions\/([^/]+)\/(claim|complete|fail)$/,
+    );
     if (req.method === 'POST' && actionRoute) {
       if (!authorizeAction(req, res)) return;
 
@@ -291,51 +221,34 @@ const server = http.createServer(async (req, res) => {
       const operation = actionRoute[2];
       const { body } = await readRawJsonBody(req);
 
-      return withActionLock(async () => {
-        const journal = await readActionJournal();
-        const current = findCurrentAction(journal, actionId);
-        if (!current) {
-          return sendJson(res, 404, { ok: false, error: 'action_not_found' });
-        }
+      let transition;
 
-        let transition;
-
-        if (operation === 'claim') {
-          const requestedLeaseSeconds = Number(body.leaseSeconds ?? 60);
-          const leaseMs = Number.isFinite(requestedLeaseSeconds)
-            ? requestedLeaseSeconds * 1000
-            : 60_000;
-          transition = claimAction(current, {
-            leaseToken: crypto.randomUUID(),
-            leaseMs,
-          });
-        } else if (operation === 'complete') {
-          transition = completeAction(current, {
-            leaseToken: body.leaseToken,
-          });
-        } else {
-          transition = failAction(current, {
-            leaseToken: body.leaseToken,
-            error: body.error,
-          });
-        }
-
-        if (!transition.ok) {
-          return sendJson(res, actionErrorStatus(transition.reason), {
-            ok: false,
-            error: transition.reason,
-          });
-        }
-
-        if (!transition.idempotent) {
-          await appendJsonl(actionLogPath, transition.action);
-        }
-
-        return sendJson(res, 200, {
-          ok: true,
-          idempotent: Boolean(transition.idempotent),
-          action: transition.action,
+      if (operation === 'claim') {
+        transition = await store.claimAction(actionId, {
+          leaseSeconds: body.leaseSeconds ?? 60,
         });
+      } else if (operation === 'complete') {
+        transition = await store.completeAction(actionId, {
+          leaseToken: body.leaseToken,
+        });
+      } else {
+        transition = await store.failAction(actionId, {
+          leaseToken: body.leaseToken,
+          error: body.error,
+        });
+      }
+
+      if (!transition.ok) {
+        return sendJson(res, actionErrorStatus(transition.reason), {
+          ok: false,
+          error: transition.reason,
+        });
+      }
+
+      return sendJson(res, 200, {
+        ok: true,
+        idempotent: Boolean(transition.idempotent),
+        action: transition.action,
       });
     }
 
@@ -368,15 +281,11 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, ignored: true });
       }
 
-      const existing = await readEvents();
-      if (existing.some((event) => event.NotificationId === body.NotificationId)) {
-        await ensureActionForRefund(body);
+      const result = await store.ingestRefund(body);
+      if (result.duplicate) {
         return sendJson(res, 200, { ok: true, duplicate: true });
       }
 
-      const storedEvent = { ...body, ReceivedAt: new Date().toISOString() };
-      await appendJsonl(refundLogPath, storedEvent);
-      await ensureActionForRefund(storedEvent);
       return sendJson(res, 200, { ok: true, stored: true });
     }
 
@@ -396,6 +305,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`Refund Management listening on 0.0.0.0:${port}`);
-  console.log(`Refund storage mode: ${refundStorage.mode} (persistent=${refundStorage.persistent})`);
-  console.log(`Action storage mode: ${actionStorage.mode} (persistent=${actionStorage.persistent})`);
+  console.log(
+    `Storage mode: ${storage.mode} (refund=${storage.refundMode}, action=${storage.actionMode})`,
+  );
 });
