@@ -2,7 +2,7 @@ local HttpService = game:GetService("HttpService")
 local ScriptEditorService = game:GetService("ScriptEditorService")
 local ServerScriptService = game:GetService("ServerScriptService")
 
-local VERSION = "0.4.0-alpha.3"
+local VERSION = "0.4.0-alpha.4"
 local ROOT_NAME = "RobuxBacktrackPro"
 local RUNTIME_NAME = "RobuxBacktrackServer"
 local HANDLERS_NAME = "ProductHandlers"
@@ -10,6 +10,7 @@ local BOOTSTRAP_NAME = "Bootstrap"
 
 local BASE_URL_SETTING = "RobuxBacktrackProBaseUrl"
 local SECRET_NAME_SETTING = "RobuxBacktrackProSecretName"
+local STUDIO_KEY_SETTING = "RobuxBacktrackProStudioApiKey"
 
 local DEFAULT_SECRET_NAME = "RobuxBacktrackActionKey"
 
@@ -758,6 +759,66 @@ readinessPadding.PaddingLeft = UDim.new(0, 10)
 readinessPadding.PaddingRight = UDim.new(0, 10)
 readinessPadding.Parent = readinessBox
 
+local OPERATIONS_FILTERS = {
+	"ALL",
+	"PENDING",
+	"FAILED",
+	"PROCESSING",
+	"APPLIED",
+	"IGNORED",
+}
+local operationsFilterIndex = 1
+
+makeLabel(14, "Refund operations", 22)
+local studioKeyBox = makeTextBox(
+	15,
+	"Studio API key (same value as backend REFUND_API_KEY)",
+	plugin:GetSetting(STUDIO_KEY_SETTING) or ""
+)
+makeLabel(
+	16,
+	"This Studio-only key can review actions and manually Ignore/Retry. ACTION_API_KEY remains in Roblox Secrets Store for game-server execution.",
+	46,
+	true
+)
+
+local operationsControls = Instance.new("Frame")
+operationsControls.LayoutOrder = 17
+operationsControls.Size = UDim2.new(1, 0, 0, 34)
+operationsControls.BackgroundTransparency = 1
+operationsControls.Parent = rootUi
+
+local saveStudioKeyButton = makeButton(
+	operationsControls,
+	"Save Studio key",
+	UDim2.new(0, 0, 0, 0),
+	UDim2.new(0.34, -4, 1, 0)
+)
+local refreshActionsButton = makeButton(
+	operationsControls,
+	"Refresh actions",
+	UDim2.new(0.34, 4, 0, 0),
+	UDim2.new(0.33, -8, 1, 0)
+)
+local filterActionsButton = makeButton(
+	operationsControls,
+	"Filter: ALL",
+	UDim2.new(0.67, 4, 0, 0),
+	UDim2.new(0.33, -4, 1, 0)
+)
+
+local actionList = Instance.new("Frame")
+actionList.LayoutOrder = 18
+actionList.Size = UDim2.new(1, 0, 0, 0)
+actionList.AutomaticSize = Enum.AutomaticSize.Y
+actionList.BackgroundTransparency = 1
+actionList.Parent = rootUi
+
+local actionListLayout = Instance.new("UIListLayout")
+actionListLayout.Padding = UDim.new(0, 8)
+actionListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+actionListLayout.Parent = actionList
+
 local function setStatus(text, kind)
 	statusLabel.Text = text
 
@@ -779,6 +840,217 @@ local function currentConfig()
 		secretName = DEFAULT_SECRET_NAME
 	end
 	return baseUrl, secretName
+end
+
+
+local function studioApiKey()
+	return trim(studioKeyBox.Text)
+end
+
+local function operatorRequest(method, path, body)
+	local baseUrl = normalizeBaseUrl(baseUrlBox.Text)
+	local apiKey = studioApiKey()
+
+	if baseUrl == "" then
+		return nil, "missing_url"
+	end
+	if apiKey == "" then
+		return nil, "missing_studio_key"
+	end
+
+	local requestOptions = {
+		Url = baseUrl .. path,
+		Method = method,
+		Headers = {
+			["Content-Type"] = "application/json",
+			["x-refund-api-key"] = apiKey,
+		},
+	}
+
+	if body ~= nil then
+		requestOptions.Body = HttpService:JSONEncode(body)
+	end
+
+	local ok, responseOrError = pcall(function()
+		return HttpService:RequestAsync(requestOptions)
+	end)
+
+	if not ok then
+		return nil, "network_error", tostring(responseOrError)
+	end
+
+	local response = responseOrError
+	local decoded = {}
+	if response.Body and response.Body ~= "" then
+		local decodedOk, result = pcall(function()
+			return HttpService:JSONDecode(response.Body)
+		end)
+		if decodedOk then
+			decoded = result
+		end
+	end
+
+	if not response.Success then
+		return nil, decoded.error or "http_error", tostring(response.StatusCode)
+	end
+
+	return decoded
+end
+
+local function clearActionCards()
+	for _, child in ipairs(actionList:GetChildren()) do
+		if child ~= actionListLayout then
+			child:Destroy()
+		end
+	end
+end
+
+local loadActions
+
+local function addActionCard(action, order)
+	local card = Instance.new("Frame")
+	card.LayoutOrder = order
+	card.Size = UDim2.new(1, 0, 0, 112)
+	card.BackgroundColor3 = COLORS.panel
+	card.BorderSizePixel = 0
+	card.Parent = actionList
+
+	local label = Instance.new("TextLabel")
+	label.Position = UDim2.new(0, 10, 0, 8)
+	label.Size = UDim2.new(1, -20, 0, 66)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = COLORS.text
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextYAlignment = Enum.TextYAlignment.Top
+	label.TextWrapped = true
+	label.Font = Enum.Font.Code
+	label.TextSize = 13
+
+	local detail = ""
+	if action.LastError then
+		detail = "\nError: " .. tostring(action.LastError)
+	elseif action.ResolutionReason then
+		detail = "\nReason: " .. tostring(action.ResolutionReason)
+	end
+
+	label.Text = string.format(
+		"%s  User %s  Product %s\nAttempt %s  Updated %s%s",
+		tostring(action.Status or "UNKNOWN"),
+		tostring(action.UserId or "-"),
+		tostring(action.ProductId or "-"),
+		tostring(action.Attempt or 0),
+		tostring(action.UpdatedAt or "-"),
+		detail
+	)
+	label.Parent = card
+
+	local function runOperatorAction(operation)
+		setStatus(string.format("%s action %s...", operation, tostring(action.ActionId)), "neutral")
+		local payload, reason, detailCode = operatorRequest(
+			"POST",
+			"/api/actions/" .. HttpService:UrlEncode(tostring(action.ActionId)) .. "/" .. operation,
+			operation == "ignore" and { reason = "ignored_from_studio" } or {}
+		)
+
+		if not payload then
+			setStatus(
+				string.format("%s failed: %s %s", operation, tostring(reason), tostring(detailCode or "")),
+				"error"
+			)
+			return
+		end
+
+		setStatus(
+			string.format("Action %s is now %s.", tostring(action.ActionId), tostring(payload.action.Status)),
+			"success"
+		)
+		loadActions()
+	end
+
+	if action.Status == "FAILED" then
+		local retryButton = makeButton(
+			card,
+			"Retry",
+			UDim2.new(0, 10, 1, -32),
+			UDim2.new(0.48, -15, 0, 24)
+		)
+		retryButton.MouseButton1Click:Connect(function()
+			runOperatorAction("retry")
+		end)
+
+		local ignoreButton = makeButton(
+			card,
+			"Ignore",
+			UDim2.new(0.5, 5, 1, -32),
+			UDim2.new(0.5, -15, 0, 24)
+		)
+		local armed = false
+		ignoreButton.MouseButton1Click:Connect(function()
+			if not armed then
+				armed = true
+				ignoreButton.Text = "Confirm ignore"
+				return
+			end
+			runOperatorAction("ignore")
+		end)
+	elseif action.Status == "PENDING" then
+		local ignoreButton = makeButton(
+			card,
+			"Ignore",
+			UDim2.new(0, 10, 1, -32),
+			UDim2.new(1, -20, 0, 24)
+		)
+		local armed = false
+		ignoreButton.MouseButton1Click:Connect(function()
+			if not armed then
+				armed = true
+				ignoreButton.Text = "Confirm ignore"
+				return
+			end
+			runOperatorAction("ignore")
+		end)
+	end
+end
+
+loadActions = function()
+	clearActionCards()
+
+	local filter = OPERATIONS_FILTERS[operationsFilterIndex]
+	local path = "/api/actions?limit=20"
+	if filter ~= "ALL" then
+		path ..= "&status=" .. HttpService:UrlEncode(filter)
+	end
+
+	local payload, reason, detail = operatorRequest("GET", path, nil)
+	if not payload then
+		setStatus(
+			string.format("Could not load actions: %s %s", tostring(reason), tostring(detail or "")),
+			"error"
+		)
+		return
+	end
+
+	local actions = payload.actions or {}
+	if #actions == 0 then
+		local empty = Instance.new("TextLabel")
+		empty.LayoutOrder = 1
+		empty.Size = UDim2.new(1, 0, 0, 42)
+		empty.BackgroundColor3 = COLORS.panel
+		empty.BorderSizePixel = 0
+		empty.TextColor3 = COLORS.muted
+		empty.Text = "No actions for filter " .. filter
+		empty.TextSize = 13
+		empty.Parent = actionList
+	else
+		for index, action in ipairs(actions) do
+			addActionCard(action, index)
+		end
+	end
+
+	setStatus(
+		string.format("Loaded %d action(s). Filter: %s", #actions, filter),
+		"success"
+	)
 end
 
 local function requestHealth()
@@ -1091,6 +1363,13 @@ local function validateSetup()
 			problems += 1
 		end
 
+		if health.apiKeyConfigured == true then
+			table.insert(lines, "✓ Backend REFUND_API_KEY: configured")
+		else
+			table.insert(lines, "✗ Backend REFUND_API_KEY: missing")
+			problems += 1
+		end
+
 		if health.actionStoragePersistent == true then
 			table.insert(lines, "✓ Action storage: persistent")
 		else
@@ -1132,9 +1411,37 @@ addProductButton.MouseButton1Click:Connect(addProduct)
 openHandlersButton.MouseButton1Click:Connect(openHandlers)
 validateButton.MouseButton1Click:Connect(validateSetup)
 
+saveStudioKeyButton.MouseButton1Click:Connect(function()
+	local key = studioApiKey()
+	if key == "" then
+		setStatus("Enter the Studio API key before saving.", "warning")
+		return
+	end
+
+	plugin:SetSetting(STUDIO_KEY_SETTING, key)
+	setStatus("Studio operator key saved locally for this plugin.", "success")
+end)
+
+refreshActionsButton.MouseButton1Click:Connect(function()
+	loadActions()
+end)
+
+filterActionsButton.MouseButton1Click:Connect(function()
+	operationsFilterIndex += 1
+	if operationsFilterIndex > #OPERATIONS_FILTERS then
+		operationsFilterIndex = 1
+	end
+
+	filterActionsButton.Text = "Filter: " .. OPERATIONS_FILTERS[operationsFilterIndex]
+	loadActions()
+end)
+
 openButton.Click:Connect(function()
 	widget.Enabled = not widget.Enabled
 	if widget.Enabled then
 		validateSetup()
+		if studioApiKey() ~= "" then
+			loadActions()
+		end
 	end
 end)
