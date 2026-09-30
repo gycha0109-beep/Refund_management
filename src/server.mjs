@@ -221,6 +221,19 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { count: actions.length, actions });
     }
 
+    const actionItemRoute = url.pathname.match(/^\/api\/actions\/([^/]+)$/);
+    if (req.method === 'GET' && actionItemRoute) {
+      if (!authorizeAction(req, res)) return;
+
+      const actionId = decodeURIComponent(actionItemRoute[1]);
+      const current = findCurrentAction(await readActionJournal(), actionId);
+      if (!current) {
+        return sendJson(res, 404, { ok: false, error: 'action_not_found' });
+      }
+
+      return sendJson(res, 200, { ok: true, action: current });
+    }
+
     const actionRoute = url.pathname.match(/^\/api\/actions\/([^/]+)\/(claim|complete|fail)$/);
     if (req.method === 'POST' && actionRoute) {
       if (!authorizeAction(req, res)) return;
