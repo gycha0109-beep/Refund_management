@@ -1,12 +1,12 @@
 {
   "name": "roblox-refund-management",
-  "version": "0.4.0-alpha.4",
+  "version": "0.4.0-alpha.5",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test",
-    "check": "node --check src/server.mjs && node --check src/webhook.mjs && node --check src/auth.mjs && node --check src/storage.mjs && node --check src/actions.mjs && node --check scripts/e2e-refund.mjs",
+    "check": "node --check src/server.mjs && node --check src/webhook.mjs && node --check src/auth.mjs && node --check src/storage.mjs && node --check src/store.mjs && node --check src/actions.mjs && node --check scripts/e2e-refund.mjs",
     "e2e:refund": "node scripts/e2e-refund.mjs"
   },
   "engines": {
