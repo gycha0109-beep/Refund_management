@@ -1,6 +1,6 @@
 # Robux Backtrack Pro v0.1
 
-Status: design + P1 backend implementation on `feat/pro-action-queue-v0`.
+Status: P1 action queue, P2 server SDK, and P3 Studio installer/configurator are implemented on `feat/pro-action-queue-v0`.
 
 ## Product boundary
 
@@ -25,10 +25,10 @@ Developer product handler
         |
         +--> APPLIED
         |
-        +--> FAILED -> retry
+        +--> FAILED -> manual review / controlled retry
 ```
 
-The backend does not decide how to reverse a purchase. Each game owns that rule.
+The backend never guesses how to reverse a purchase. Each game owns that rule.
 
 ## P1 action queue contract
 
@@ -40,7 +40,7 @@ States:
 - `PROCESSING`
 - `APPLIED`
 - `FAILED`
-- `IGNORED` (reserved for the Pro Studio UI)
+- `IGNORED` (reserved for the Pro operations UI)
 
 Action state is stored as an append-only JSONL journal. The latest record for an `ActionId` is the current state.
 
@@ -98,29 +98,70 @@ content-type: application/json
 {"leaseToken":"...","error":"datastore timeout"}
 ```
 
-A failed action is claimable again.
-
-## Important delivery guarantee
-
-The backend lease alone cannot guarantee exactly-once mutation inside a Roblox DataStore. A server can apply a reversal and crash before acknowledging completion.
-
-P2 must therefore make the Roblox server module persist a per-refund idempotency marker before/with the game-specific handler. The target property is safe retry, not a false distributed exactly-once guarantee.
+Failed actions are deliberately not returned by the automatic claimable queue.
 
 ## P2 server SDK
 
-The first server SDK lives in `roblox/RobuxBacktrackServer.lua`.
+The SDK lives in `roblox/RobuxBacktrackServer.lua`.
 
-Responsibilities implemented:
+It polls claimable actions, takes a backend lease, maps `ProductId` to a developer callback, writes a local DataStore execution marker, and then acknowledges success/failure.
 
-1. Poll claimable actions with bounded jitter.
-2. Claim an action with a backend lease.
-3. Resolve `ProductId` to a developer callback.
-4. Create a game-side DataStore marker keyed from `NotificationId`.
-5. Refuse to automatically re-run an action whose local marker is already `STARTED` or `FAILED`.
-6. Recover a backend acknowledgement safely when the local marker is already `APPLIED`.
-7. Mark remote success with `complete` or failure with `fail`.
-8. Read `ACTION_API_KEY` through Roblox Secrets Store, never a client script.
+The safe default is conservative:
 
-The safe default is intentionally conservative: uncertain local execution becomes manual review rather than an automatic second deduction.
+- Local `APPLIED` + lost backend ACK -> reclaim and ACK without running the handler twice.
+- Local `STARTED` or `FAILED` -> stop automatic execution and require review.
+- Unknown ProductId -> fail closed.
 
-Next: P3 product handler templates + Studio installer/config UI.
+This is safe retry behavior, not a false distributed exactly-once guarantee.
+
+## P3 Studio installer/configurator
+
+The Pro plugin prototype lives in `plugin/RobuxBacktrackPro.plugin.lua`.
+
+It can:
+
+1. Save backend URL and the **name** of the Roblox secret. It never stores the `ACTION_API_KEY` value.
+2. Health-check the Pro backend.
+3. Install/update a managed server runtime under `ServerScriptService/RobuxBacktrackPro`.
+4. Preserve developer-owned `ProductHandlers` code during runtime updates.
+5. Add a safe handler stub for a numeric Developer Product ID.
+6. Open `ProductHandlers` directly in the Script Editor.
+7. Validate runtime presence, handler count/TODO handlers, backend action-key configuration, and persistent action storage.
+
+Installed structure:
+
+```text
+ServerScriptService
+└── RobuxBacktrackPro
+    ├── RobuxBacktrackServer   (ModuleScript, plugin-managed)
+    ├── ProductHandlers        (ModuleScript, developer-owned body)
+    └── Bootstrap              (Script, plugin-managed)
+```
+
+New handler stubs intentionally return `false, "handler_not_implemented"` until the developer replaces the TODO. This prevents an unimplemented reversal from being silently marked `APPLIED`.
+
+The plugin writes script source through `ScriptEditorService:UpdateSourceAsync()` and refuses to overwrite unknown developer scripts.
+
+## Manual requirements
+
+The experience owner must still:
+
+1. Enable **Allow HTTP Requests** in Experience Settings -> Security.
+2. Put the backend `ACTION_API_KEY` value into Roblox Secrets Store using the configured secret name (default: `RobuxBacktrackActionKey`).
+3. Implement each ProductId handler against the game's own persistent data model.
+4. Test with a controlled fake refund before enabling real operational use.
+
+## Next phase
+
+P4 is an end-to-end fixture/demo:
+
+```text
+fake refund
+ -> backend PENDING
+ -> Roblox server claim
+ -> sample persistent balance mutation
+ -> local idempotency marker
+ -> backend APPLIED
+```
+
+P5 then adds the operational Pro UI for PENDING/APPLIED/FAILED/IGNORED review.
