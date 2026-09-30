@@ -294,3 +294,165 @@ test('protected APIs return 503 when their server keys are not configured', asyn
     error: 'api_key_not_configured',
   });
 });
+
+
+test('refund read key can inspect Pro actions but runtime-only mutations still require ACTION_API_KEY', async (t) => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'refund-management-operator-'));
+  const port = 18789;
+  const webhookSecret = 'operator-webhook-secret';
+  const refundApiKey = 'operator-studio-key';
+  const actionApiKey = 'operator-runtime-key';
+
+  const child = spawn(process.execPath, ['src/server.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      ROBLOX_WEBHOOK_SECRET: webhookSecret,
+      REFUND_API_KEY: refundApiKey,
+      ACTION_API_KEY: actionApiKey,
+      REFUND_LOG_PATH: path.join(tempDir, 'refunds.jsonl'),
+      ACTION_LOG_PATH: path.join(tempDir, 'actions.jsonl'),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  t.after(async () => {
+    child.kill('SIGTERM');
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await waitForServer(`http://127.0.0.1:${port}/health`, child);
+
+  async function postRefund(notificationId, productId = 456) {
+    const body = {
+      NotificationId: notificationId,
+      EventType: 'TransactionRefunded',
+      EventTime: new Date().toISOString(),
+      EventPayload: {
+        UserId: 123,
+        ProductId: productId,
+        RobuxAmount: 400,
+        TransactionId: `tx-${notificationId}`,
+      },
+    };
+    const rawBody = JSON.stringify(body);
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = buildExpectedSignature({
+      timestamp,
+      rawBody,
+      secret: webhookSecret,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhooks/roblox`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'roblox-signature': `t=${timestamp},v1=${signature}`,
+      },
+      body: rawBody,
+    });
+    assert.equal(response.status, 200);
+  }
+
+  await postRefund('operator-ignore-1');
+
+  const viaStudioKey = await fetch(
+    `http://127.0.0.1:${port}/api/actions?status=PENDING`,
+    { headers: { 'x-refund-api-key': refundApiKey } },
+  );
+  assert.equal(viaStudioKey.status, 200);
+  assert.equal((await viaStudioKey.json()).count, 1);
+
+  const claimWithStudioKey = await fetch(
+    `http://127.0.0.1:${port}/api/actions/operator-ignore-1/claim`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-refund-api-key': refundApiKey,
+      },
+      body: '{}',
+    },
+  );
+  assert.equal(claimWithStudioKey.status, 401);
+
+  const ignored = await fetch(
+    `http://127.0.0.1:${port}/api/actions/operator-ignore-1/ignore`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-refund-api-key': refundApiKey,
+      },
+      body: JSON.stringify({ reason: 'manual operator decision' }),
+    },
+  );
+  assert.equal(ignored.status, 200);
+  const ignoredPayload = await ignored.json();
+  assert.equal(ignoredPayload.action.Status, 'IGNORED');
+  assert.equal(ignoredPayload.action.ResolutionReason, 'manual operator decision');
+
+  await postRefund('operator-retry-1', 789);
+
+  const claim = await fetch(
+    `http://127.0.0.1:${port}/api/actions/operator-retry-1/claim`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-action-api-key': actionApiKey,
+      },
+      body: '{}',
+    },
+  );
+  assert.equal(claim.status, 200);
+  const claimPayload = await claim.json();
+
+  const failed = await fetch(
+    `http://127.0.0.1:${port}/api/actions/operator-retry-1/fail`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-action-api-key': actionApiKey,
+      },
+      body: JSON.stringify({
+        leaseToken: claimPayload.action.LeaseToken,
+        error: 'fixture failure',
+      }),
+    },
+  );
+  assert.equal(failed.status, 200);
+  assert.equal((await failed.json()).action.Status, 'FAILED');
+
+  const retryWithRuntimeKey = await fetch(
+    `http://127.0.0.1:${port}/api/actions/operator-retry-1/retry`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-action-api-key': actionApiKey,
+      },
+      body: '{}',
+    },
+  );
+  assert.equal(retryWithRuntimeKey.status, 401);
+
+  const retried = await fetch(
+    `http://127.0.0.1:${port}/api/actions/operator-retry-1/retry`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-refund-api-key': refundApiKey,
+      },
+      body: '{}',
+    },
+  );
+  assert.equal(retried.status, 200);
+  const retriedPayload = await retried.json();
+  assert.equal(retriedPayload.action.Status, 'PENDING');
+  assert.equal(retriedPayload.action.Attempt, 1);
+  assert.equal(retriedPayload.action.LastError, null);
+});
