@@ -2,7 +2,7 @@ local HttpService = game:GetService("HttpService")
 local ScriptEditorService = game:GetService("ScriptEditorService")
 local ServerScriptService = game:GetService("ServerScriptService")
 
-local VERSION = "0.4.0-alpha.2"
+local VERSION = "0.4.0-alpha.3"
 local ROOT_NAME = "RobuxBacktrackPro"
 local RUNTIME_NAME = "RobuxBacktrackServer"
 local HANDLERS_NAME = "ProductHandlers"
@@ -328,12 +328,26 @@ local function processAction(candidate)
 		return false
 	end
 
+	if config.TestFault == "AFTER_HANDLER_BEFORE_COMPLETE" then
+		warn("[Robux Backtrack][E2E] injected fault after handler and local APPLIED marker")
+		return false
+	end
+
 	return completeRemote(action)
 end
 
 function Backtrack.Configure(options)
 	assert(not running, "Stop Robux Backtrack before reconfiguring")
 	assert(type(options) == "table", "Configure expects a table")
+
+	local testFault = options.TestFault
+	if testFault ~= nil then
+		assert(RunService:IsStudio(), "TestFault is only allowed in Roblox Studio")
+		assert(
+			testFault == "AFTER_HANDLER_BEFORE_COMPLETE",
+			"unsupported TestFault"
+		)
+	end
 
 	config = {
 		BaseUrl = normalizeBaseUrl(options.BaseUrl),
@@ -343,6 +357,7 @@ function Backtrack.Configure(options)
 		MaxActionsPerPoll = tonumber(options.MaxActionsPerPoll) or DEFAULTS.MaxActionsPerPoll,
 		SecretName = options.SecretName or DEFAULTS.SecretName,
 		DataStoreName = options.DataStoreName or DEFAULTS.DataStoreName,
+		TestFault = testFault,
 	}
 
 	assert(config.PollIntervalSeconds >= 5, "PollIntervalSeconds must be at least 5")
