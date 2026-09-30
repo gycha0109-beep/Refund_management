@@ -6,7 +6,7 @@ export const ACTION_STATUSES = Object.freeze([
   'IGNORED',
 ]);
 
-const CLAIMABLE_STATUSES = new Set(['PENDING', 'FAILED', 'PROCESSING']);
+const CLAIMABLE_STATUSES = new Set(['PENDING', 'PROCESSING']);
 const TERMINAL_STATUSES = new Set(['APPLIED', 'IGNORED']);
 
 function toIso(ms) {
@@ -186,6 +186,63 @@ export function failAction(action, {
       UpdatedAt: toIso(nowMs),
       LeaseExpiresAt: null,
       LastError: message,
+    },
+  };
+}
+
+
+export function ignoreAction(action, {
+  reason = 'manual_ignore',
+  nowMs = Date.now(),
+} = {}) {
+  if (!action) return { ok: false, reason: 'action_not_found' };
+
+  if (action.Status === 'IGNORED') {
+    return { ok: true, idempotent: true, action };
+  }
+
+  if (action.Status !== 'PENDING' && action.Status !== 'FAILED') {
+    return { ok: false, reason: 'action_not_ignorable' };
+  }
+
+  return {
+    ok: true,
+    idempotent: false,
+    action: {
+      ...action,
+      Status: 'IGNORED',
+      UpdatedAt: toIso(nowMs),
+      LeaseToken: null,
+      LeaseExpiresAt: null,
+      ResolutionReason: String(reason || 'manual_ignore').slice(0, 500),
+    },
+  };
+}
+
+export function retryAction(action, {
+  nowMs = Date.now(),
+} = {}) {
+  if (!action) return { ok: false, reason: 'action_not_found' };
+
+  if (action.Status === 'PENDING') {
+    return { ok: true, idempotent: true, action };
+  }
+
+  if (action.Status !== 'FAILED') {
+    return { ok: false, reason: 'action_not_retryable' };
+  }
+
+  return {
+    ok: true,
+    idempotent: false,
+    action: {
+      ...action,
+      Status: 'PENDING',
+      UpdatedAt: toIso(nowMs),
+      LeaseToken: null,
+      LeaseExpiresAt: null,
+      LastError: null,
+      ResolutionReason: null,
     },
   };
 }
