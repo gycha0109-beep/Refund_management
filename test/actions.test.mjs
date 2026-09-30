@@ -5,8 +5,10 @@ import {
   claimAction,
   completeAction,
   failAction,
+  ignoreAction,
   isActionClaimable,
   reduceActionJournal,
+  retryAction,
 } from '../src/actions.mjs';
 
 const refund = {
@@ -106,7 +108,7 @@ test('complete is protected by lease token and idempotent for the same token', (
   assert.equal(replay.idempotent, true);
 });
 
-test('failed action can be reclaimed with an incremented attempt', () => {
+test('failed action requires an explicit operator retry before it can be claimed again', () => {
   const pending = actionFromRefund(refund, 1_000);
   const claimed = claimAction(pending, {
     leaseToken: 'lease-1',
@@ -122,12 +124,23 @@ test('failed action can be reclaimed with an incremented attempt', () => {
   assert.equal(failed.action.Status, 'FAILED');
   assert.equal(failed.action.LastError, 'datastore timeout');
 
-  const retry = claimAction(failed.action, {
+  const blocked = claimAction(failed.action, {
     leaseToken: 'lease-2',
     nowMs: 30_000,
   });
-  assert.equal(retry.ok, true);
-  assert.equal(retry.action.Attempt, 2);
+  assert.deepEqual(blocked, { ok: false, reason: 'action_not_claimable' });
+
+  const reset = retryAction(failed.action, { nowMs: 40_000 });
+  assert.equal(reset.ok, true);
+  assert.equal(reset.action.Status, 'PENDING');
+  assert.equal(reset.action.LastError, null);
+
+  const retried = claimAction(reset.action, {
+    leaseToken: 'lease-2',
+    nowMs: 50_000,
+  });
+  assert.equal(retried.ok, true);
+  assert.equal(retried.action.Attempt, 2);
 });
 
 test('claimable filter includes pending and expired leases but not live leases or failed actions', () => {
@@ -148,4 +161,55 @@ test('claimable filter includes pending and expired leases but not live leases o
     nowMs: 30_000,
   }).action;
   assert.equal(isActionClaimable(failed, 90_000), false);
+});
+
+
+test('operator can ignore pending or failed actions but not processing/applied actions', () => {
+  const pending = actionFromRefund(refund, 1_000);
+
+  const ignored = ignoreAction(pending, {
+    reason: 'reward was already consumed',
+    nowMs: 2_000,
+  });
+  assert.equal(ignored.ok, true);
+  assert.equal(ignored.action.Status, 'IGNORED');
+  assert.equal(ignored.action.ResolutionReason, 'reward was already consumed');
+
+  const replay = ignoreAction(ignored.action, { nowMs: 3_000 });
+  assert.equal(replay.ok, true);
+  assert.equal(replay.idempotent, true);
+
+  const processing = claimAction(pending, {
+    leaseToken: 'lease-1',
+    nowMs: 4_000,
+  }).action;
+  assert.deepEqual(
+    ignoreAction(processing, { nowMs: 5_000 }),
+    { ok: false, reason: 'action_not_ignorable' },
+  );
+});
+
+test('operator retry only resets FAILED actions to PENDING', () => {
+  const pending = actionFromRefund(refund, 1_000);
+  const claimed = claimAction(pending, {
+    leaseToken: 'lease-1',
+    nowMs: 2_000,
+  }).action;
+  const failed = failAction(claimed, {
+    leaseToken: 'lease-1',
+    error: 'temporary datastore failure',
+    nowMs: 3_000,
+  }).action;
+
+  const reset = retryAction(failed, { nowMs: 4_000 });
+  assert.equal(reset.ok, true);
+  assert.equal(reset.action.Status, 'PENDING');
+  assert.equal(reset.action.Attempt, 1);
+  assert.equal(reset.action.LastError, null);
+  assert.equal(reset.action.LeaseToken, null);
+
+  assert.deepEqual(
+    retryAction(claimed, { nowMs: 5_000 }),
+    { ok: false, reason: 'action_not_retryable' },
+  );
 });
