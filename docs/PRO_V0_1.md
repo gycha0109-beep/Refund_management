@@ -56,9 +56,13 @@ Do not reuse the Studio read-only `REFUND_API_KEY`.
 
 ### Read queue
 
+The game server polls only actions that are safe for automatic claiming:
+
 ```http
-GET /api/actions?status=PENDING&limit=20
+GET /api/actions?claimable=true&limit=20
 ```
+
+This returns new `PENDING` actions and `PROCESSING` actions whose lease expired. It intentionally excludes `FAILED` actions so a handler failure does not trigger an automatic second deduction. Operators can still inspect failures with `?status=FAILED`.
 
 ### Claim
 
@@ -102,15 +106,21 @@ The backend lease alone cannot guarantee exactly-once mutation inside a Roblox D
 
 P2 must therefore make the Roblox server module persist a per-refund idempotency marker before/with the game-specific handler. The target property is safe retry, not a false distributed exactly-once guarantee.
 
-## Next phase
+## P2 server SDK
 
-P2: Roblox server SDK / ModuleScript.
+The first server SDK lives in `roblox/RobuxBacktrackServer.lua`.
 
-Responsibilities:
+Responsibilities implemented:
 
-1. Poll pending actions.
-2. Claim one action.
+1. Poll claimable actions with bounded jitter.
+2. Claim an action with a backend lease.
 3. Resolve `ProductId` to a developer callback.
-4. Use `NotificationId` as the game-side idempotency key.
-5. Mark success with `complete` or failure with `fail`.
-6. Never place `ACTION_API_KEY` in a public client script.
+4. Create a game-side DataStore marker keyed from `NotificationId`.
+5. Refuse to automatically re-run an action whose local marker is already `STARTED` or `FAILED`.
+6. Recover a backend acknowledgement safely when the local marker is already `APPLIED`.
+7. Mark remote success with `complete` or failure with `fail`.
+8. Read `ACTION_API_KEY` through Roblox Secrets Store, never a client script.
+
+The safe default is intentionally conservative: uncertain local execution becomes manual review rather than an automatic second deduction.
+
+Next: P3 product handler templates + Studio installer/config UI.

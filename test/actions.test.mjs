@@ -5,6 +5,7 @@ import {
   claimAction,
   completeAction,
   failAction,
+  isActionClaimable,
   reduceActionJournal,
 } from '../src/actions.mjs';
 
@@ -127,4 +128,24 @@ test('failed action can be reclaimed with an incremented attempt', () => {
   });
   assert.equal(retry.ok, true);
   assert.equal(retry.action.Attempt, 2);
+});
+
+test('claimable filter includes pending and expired leases but not live leases or failed actions', () => {
+  const pending = actionFromRefund(refund, 1_000);
+  assert.equal(isActionClaimable(pending, 10_000), true);
+
+  const live = claimAction(pending, {
+    leaseToken: 'lease-live',
+    nowMs: 10_000,
+    leaseMs: 60_000,
+  }).action;
+  assert.equal(isActionClaimable(live, 20_000), false);
+  assert.equal(isActionClaimable(live, 80_000), true);
+
+  const failed = failAction(live, {
+    leaseToken: 'lease-live',
+    error: 'manual review',
+    nowMs: 30_000,
+  }).action;
+  assert.equal(isActionClaimable(failed, 90_000), false);
 });

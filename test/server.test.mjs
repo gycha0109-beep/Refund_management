@@ -137,6 +137,13 @@ test('HTTP server accepts a signed refund and exposes a leased action queue', as
   assert.equal(pendingPayload.actions[0].ActionId, body.NotificationId);
   assert.equal(pendingPayload.actions[0].Status, 'PENDING');
 
+  const claimableBefore = await fetch(
+    `http://127.0.0.1:${port}/api/actions?claimable=true`,
+    { headers: { 'x-action-api-key': actionApiKey } },
+  );
+  assert.equal(claimableBefore.status, 200);
+  assert.equal((await claimableBefore.json()).count, 1);
+
   const claim = await fetch(
     `http://127.0.0.1:${port}/api/actions/${body.NotificationId}/claim`,
     {
@@ -153,6 +160,13 @@ test('HTTP server accepts a signed refund and exposes a leased action queue', as
   assert.equal(claimPayload.action.Status, 'PROCESSING');
   assert.equal(claimPayload.action.Attempt, 1);
   assert.equal(typeof claimPayload.action.LeaseToken, 'string');
+
+  const claimableDuringLease = await fetch(
+    `http://127.0.0.1:${port}/api/actions?claimable=true`,
+    { headers: { 'x-action-api-key': actionApiKey } },
+  );
+  assert.equal(claimableDuringLease.status, 200);
+  assert.equal((await claimableDuringLease.json()).count, 0);
 
   const duplicateClaim = await fetch(
     `http://127.0.0.1:${port}/api/actions/${body.NotificationId}/claim`,

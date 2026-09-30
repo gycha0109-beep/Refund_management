@@ -68,6 +68,19 @@ export function findCurrentAction(records, actionId) {
   return current;
 }
 
+export function isActionClaimable(action, nowMs = Date.now()) {
+  if (!action) return false;
+  if (action.Status === 'PENDING') return true;
+
+  if (action.Status === 'PROCESSING') {
+    if (!action.LeaseExpiresAt) return true;
+    const leaseExpiry = Date.parse(action.LeaseExpiresAt);
+    return !Number.isFinite(leaseExpiry) || leaseExpiry <= nowMs;
+  }
+
+  return false;
+}
+
 export function claimAction(action, {
   leaseToken,
   nowMs = Date.now(),

@@ -9,6 +9,7 @@ import {
   completeAction,
   failAction,
   findCurrentAction,
+  isActionClaimable,
   reduceActionJournal,
 } from './actions.mjs';
 import { verifyApiKey } from './auth.mjs';
@@ -155,7 +156,7 @@ const server = http.createServer(async (req, res) => {
           health: '/health',
           webhook: '/webhooks/roblox',
           refunds: '/api/refunds?limit=20',
-          actions: '/api/actions?status=PENDING&limit=20',
+          actions: '/api/actions?claimable=true&limit=20',
         },
       });
     }
@@ -190,14 +191,28 @@ const server = http.createServer(async (req, res) => {
       const limit = Math.max(1, Math.min(Number.isFinite(requested) ? requested : 20, 100));
       const requestedStatus = url.searchParams.get('status');
       const status = requestedStatus?.toUpperCase() ?? null;
+      const requestedClaimable = url.searchParams.get('claimable');
+      const claimable = requestedClaimable === 'true';
 
       if (status && !ACTION_STATUSES.includes(status)) {
         return sendJson(res, 400, { ok: false, error: 'invalid_action_status' });
+      }
+      if (
+        requestedClaimable
+        && requestedClaimable !== 'true'
+        && requestedClaimable !== 'false'
+      ) {
+        return sendJson(res, 400, { ok: false, error: 'invalid_claimable_filter' });
+      }
+      if (status && claimable) {
+        return sendJson(res, 400, { ok: false, error: 'conflicting_action_filters' });
       }
 
       let actions = reduceActionJournal(await readActionJournal());
       if (status) {
         actions = actions.filter((action) => action.Status === status);
+      } else if (claimable) {
+        actions = actions.filter((action) => isActionClaimable(action));
       }
 
       actions.sort((a, b) => String(b.UpdatedAt).localeCompare(String(a.UpdatedAt)));

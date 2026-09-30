@@ -13,7 +13,7 @@ Roblox Transaction Refunded webhook logger and Studio viewer.
 - Expose recent refund events over a small HTTP API
 - Provide a Roblox Studio plugin panel for viewing recent events
 
-Automatic entitlement revocation, billing, SaaS accounts, multi-tenancy, and team features are intentionally out of scope for this MVP.
+Automatic entitlement revocation remains out of scope for the free MVP. Experimental Pro work is isolated on a feature branch and adds a leased refund action queue plus a server-side handler SDK; it is not part of the currently published free plugin.
 
 ## Maintainer test deployment
 
