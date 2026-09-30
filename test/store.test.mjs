@@ -70,3 +70,27 @@ test('maps Postgres action rows to the public action contract', () => {
   assert.equal(mapped.Attempt, 2);
   assert.equal(mapped.LastError, 'failure');
 });
+
+
+test('Supabase ping performs a lightweight authenticated database read', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  const store = createStore({
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SECRET_KEY: 'sb_secret_ping',
+  }, { fetchImpl });
+
+  assert.equal(await store.ping(), true);
+  assert.equal(
+    calls[0].url,
+    'https://example.supabase.co/rest/v1/refunds?select=notification_id&limit=1',
+  );
+  assert.equal(calls[0].options.headers.apikey, 'sb_secret_ping');
+});
