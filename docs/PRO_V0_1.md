@@ -1,6 +1,6 @@
 # Robux Backtrack Pro v0.1
 
-Status: P1 action queue, P2 server SDK, and P3 Studio installer/configurator are implemented on `feat/pro-action-queue-v0`.
+Status: P1 action queue, P2 server SDK, P3 installer/configurator, P4 E2E harness, and P5 operator UI are implemented on `feat/pro-action-queue-v0`. P4 still requires live Roblox Studio staging validation before closure.
 
 ## Product boundary
 
@@ -40,7 +40,7 @@ States:
 - `PROCESSING`
 - `APPLIED`
 - `FAILED`
-- `IGNORED` (reserved for the Pro operations UI)
+- `IGNORED`
 
 Action state is stored as an append-only JSONL journal. The latest record for an `ActionId` is the current state.
 
@@ -52,7 +52,7 @@ Action APIs use a separate secret:
 x-action-api-key: ACTION_API_KEY
 ```
 
-Do not reuse the Studio read-only `REFUND_API_KEY`.
+`ACTION_API_KEY` is reserved for the Roblox game-server runtime. Studio operator reads and manual `ignore` / `retry` transitions use the existing `REFUND_API_KEY`, so the runtime secret never needs to be stored in plugin settings.
 
 ### Read queue
 
@@ -163,4 +163,20 @@ The runtime now supports one Studio-only fault mode, `AFTER_HANDLER_BEFORE_COMPL
 
 Repository CI verifies the harness and backend contracts. P4 is not considered CLOSED until the Roblox Studio fixture is actually run against a dedicated staging deployment and all five cases are observed.
 
-P5 then adds the operational Pro UI for PENDING/APPLIED/FAILED/IGNORED review.
+## P5 Studio operator UI
+
+The Pro plugin now includes an operations section that can read the latest action journal through the Studio `REFUND_API_KEY`.
+
+It supports:
+
+- filters for `PENDING`, `FAILED`, `PROCESSING`, `APPLIED`, and `IGNORED`;
+- manual `Ignore` for `PENDING` / `FAILED`;
+- explicit `Retry` for `FAILED`, which resets it to `PENDING`;
+- a two-click confirmation before Ignore;
+- read-only display for `PROCESSING` and terminal `APPLIED` / `IGNORED`.
+
+A failed action can no longer be claimed directly. It must first pass through the operator retry transition. This prevents a runtime worker from silently retrying a potentially non-idempotent failed reversal.
+
+The Studio key is the existing backend `REFUND_API_KEY`. The game-server `ACTION_API_KEY` remains separate and stays in Roblox Secrets Store.
+
+Next after live P4 validation: polish the operator cards, package the paid asset, and perform release-candidate testing.
