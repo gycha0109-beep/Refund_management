@@ -115,6 +115,7 @@ const server = http.createServer(async (req, res) => {
           webhook: '/webhooks/roblox',
           refunds: '/api/refunds?limit=20',
           actions: '/api/actions?claimable=true&limit=20',
+          keepalive: '/internal/keepalive',
         },
       });
     }
@@ -132,6 +133,16 @@ const server = http.createServer(async (req, res) => {
         actionStorageMode: storage.actionMode,
         dataStore: storage.mode,
         supabaseConfigured: storage.mode === 'supabase',
+      });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/internal/keepalive') {
+      if (!authorizeRefundRead(req, res)) return;
+
+      await store.ping();
+      return sendJson(res, 200, {
+        ok: true,
+        storage: storage.mode,
       });
     }
 
