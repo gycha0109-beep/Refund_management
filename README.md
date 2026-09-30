@@ -13,7 +13,7 @@ Roblox Transaction Refunded webhook logger and Studio viewer.
 - Expose recent refund events over a small HTTP API
 - Provide a Roblox Studio plugin panel for viewing recent events
 
-Automatic entitlement revocation, billing, SaaS accounts, multi-tenancy, and team features are intentionally out of scope for this MVP.
+Automatic entitlement revocation remains out of scope for the free MVP. Experimental Pro work is isolated on a feature branch and adds a leased refund action queue plus a server-side handler SDK; it is not part of the currently published free plugin.
 
 ## Maintainer test deployment
 
@@ -134,3 +134,31 @@ Tests cover:
 ## Security note
 
 Never commit either secret. Use Railway Variables / deployment secrets.
+
+
+## Pro development
+
+The published free plugin remains `plugin/RefundLogger.plugin.lua`.
+
+Experimental paid-version work is isolated on `feat/pro-action-queue-v0`:
+
+- `src/actions.mjs`: leased refund action queue
+- `roblox/RobuxBacktrackServer.lua`: server-side execution SDK
+- `plugin/RobuxBacktrackPro.plugin.lua`: Studio installer/configurator prototype
+- `docs/PRO_V0_1.md`: architecture and rollout contract
+
+The Pro plugin stores only the backend URL and Roblox **secret name** in plugin settings. The `ACTION_API_KEY` value belongs in Roblox Secrets Store and must not be embedded in plugin or game source.
+
+
+## Pro durable hosting target: Cloud Run + Supabase
+
+The Pro branch can use Supabase Postgres instead of local/Railway JSONL storage. Configure both:
+
+```text
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_...
+```
+
+When both are present, refund and action persistence switches to `supabase-postgres`. Without them, the legacy JSONL store remains available for local tests and the existing free deployment.
+
+Cloud Run deployment instructions and cutover rules are in `docs/CLOUD_RUN_SUPABASE.md`. Database DDL/RPCs live in `supabase/migrations/202609300001_robux_backtrack.sql`.
