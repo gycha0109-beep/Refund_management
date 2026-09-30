@@ -180,3 +180,19 @@ A failed action can no longer be claimed directly. It must first pass through th
 The Studio key is the existing backend `REFUND_API_KEY`. The game-server `ACTION_API_KEY` remains separate and stays in Roblox Secrets Store.
 
 Next after live P4 validation: polish the operator cards, package the paid asset, and perform release-candidate testing.
+
+
+## Durable hosting migration
+
+The Pro branch now supports stateless Cloud Run hosting backed by Supabase Postgres.
+
+When `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are configured together:
+
+- webhook de-duplication moves to a Postgres primary key;
+- action state is stored in `refund_actions`;
+- claim/complete/fail/ignore/retry transitions are executed atomically through Postgres RPCs;
+- Cloud Run instances no longer depend on a shared local filesystem or an in-process action lock.
+
+The JSONL implementation remains as the local/test and existing free-deployment fallback.
+
+See `docs/CLOUD_RUN_SUPABASE.md`.
