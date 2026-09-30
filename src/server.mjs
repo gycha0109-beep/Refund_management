@@ -9,8 +9,10 @@ import {
   completeAction,
   failAction,
   findCurrentAction,
+  ignoreAction,
   isActionClaimable,
   reduceActionJournal,
+  retryAction,
 } from './actions.mjs';
 import { verifyApiKey } from './auth.mjs';
 import { resolveActionLogPath, resolveRefundLogPath } from './storage.mjs';
@@ -130,12 +132,21 @@ function authorizeAction(req, res) {
   });
 }
 
+function authorizeActionRead(req, res) {
+  if (req.headers['x-refund-api-key'] !== undefined) {
+    return authorizeRefundRead(req, res);
+  }
+  return authorizeAction(req, res);
+}
+
 function actionErrorStatus(reason) {
   if (reason === 'action_not_found') return 404;
   if (
     reason === 'action_already_leased'
     || reason === 'action_not_claimable'
     || reason === 'action_not_processing'
+    || reason === 'action_not_ignorable'
+    || reason === 'action_not_retryable'
     || reason === 'lease_token_mismatch'
   ) {
     return 409;
@@ -151,7 +162,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'refund-management',
-        version: '0.4.0-alpha.1',
+        version: '0.4.0-alpha.4',
         endpoints: {
           health: '/health',
           webhook: '/webhooks/roblox',
@@ -185,7 +196,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/actions') {
-      if (!authorizeAction(req, res)) return;
+      if (!authorizeActionRead(req, res)) return;
 
       const requested = Number(url.searchParams.get('limit') ?? 20);
       const limit = Math.max(1, Math.min(Number.isFinite(requested) ? requested : 20, 100));
@@ -223,7 +234,7 @@ const server = http.createServer(async (req, res) => {
 
     const actionItemRoute = url.pathname.match(/^\/api\/actions\/([^/]+)$/);
     if (req.method === 'GET' && actionItemRoute) {
-      if (!authorizeAction(req, res)) return;
+      if (!authorizeActionRead(req, res)) return;
 
       const actionId = decodeURIComponent(actionItemRoute[1]);
       const current = findCurrentAction(await readActionJournal(), actionId);
@@ -232,6 +243,44 @@ const server = http.createServer(async (req, res) => {
       }
 
       return sendJson(res, 200, { ok: true, action: current });
+    }
+
+    const operatorActionRoute = url.pathname.match(/^\/api\/actions\/([^/]+)\/(ignore|retry)$/);
+    if (req.method === 'POST' && operatorActionRoute) {
+      if (!authorizeRefundRead(req, res)) return;
+
+      const actionId = decodeURIComponent(operatorActionRoute[1]);
+      const operation = operatorActionRoute[2];
+      const { body } = await readRawJsonBody(req);
+
+      return withActionLock(async () => {
+        const journal = await readActionJournal();
+        const current = findCurrentAction(journal, actionId);
+        if (!current) {
+          return sendJson(res, 404, { ok: false, error: 'action_not_found' });
+        }
+
+        const transition = operation === 'ignore'
+          ? ignoreAction(current, { reason: body.reason })
+          : retryAction(current);
+
+        if (!transition.ok) {
+          return sendJson(res, actionErrorStatus(transition.reason), {
+            ok: false,
+            error: transition.reason,
+          });
+        }
+
+        if (!transition.idempotent) {
+          await appendJsonl(actionLogPath, transition.action);
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          idempotent: Boolean(transition.idempotent),
+          action: transition.action,
+        });
+      });
     }
 
     const actionRoute = url.pathname.match(/^\/api\/actions\/([^/]+)\/(claim|complete|fail)$/);
