@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+data
+docs
+plugin
+roblox
+supabase
+test
+.env
+.env.*
+!.env.example
